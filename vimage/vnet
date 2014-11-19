@@ -1,0 +1,69 @@
+#!/bin/sh
+
+PATH=/sbin:/bin:/usr/sbin:/usr/bin
+
+#
+# This script will run on the parent for jails using
+# VIMAGE/vnet under FreeBSD.  This will create a an epair(4) and
+# bridge(4) it to the $interface.
+# 
+
+# Status: Start works.  stop hangs machine.
+#
+# FIXME: STOP hangs/panics the machine, 
+#        testing in a Xen VM without a console.
+#
+
+
+# #######################
+#  Sample /etc/jail.conf
+# ########################
+#
+# 	path = "/jails/$name";
+# 	
+# 	exec.poststart="/root/vnet start $name xn0";
+# 	exec.prestop="/root/vnet stop $name xn0";
+# 	
+# 	cents {
+# 		host.hostname = "cents";
+# 		vnet;
+# 	
+# 	}
+#
+#
+
+
+cmd=$1
+jailname=$2
+interface=$3
+
+set -x
+
+jid=`jls -j ${jailname} jid`
+
+if [ $? -ne 0 ]; then
+	echo "Can't find the jid for ${jailname} ($?)"
+	exit 2
+fi
+
+case "${cmd}" in
+	start)
+		ifconfig bridge${jid} create 1> /dev/null 2>&1 
+		ifconfig epair${jid} create 1> /dev/null 2>&1
+		
+		ifconfig bridge${jid} addm ${interface} addm epair${jid}a 1> /dev/null 2>&1
+		ifconfig epair${jid}b vnet ${jid} 1> /dev/null 2>&1
+	;;
+	stop)
+		ifconfig epair${jid}b -vnet ${jid} 1> /dev/null 2>&1
+		ifconfig bridge${jid} deletem ${interface} deletem epair${jid}a 1> /dev/null 2>&1
+		ifconfig bridge${jid} destroy 1> /dev/null 2>&1
+		ifconfig epair${jid}b destroy 1> /dev/null 2>&1
+		ifconfig epair${jid}a destroy 1> /dev/null 2>&1		
+	;;
+	*)
+		echo "Unkown command ${cmd}."
+		exit 2
+	;;	
+esac
+
