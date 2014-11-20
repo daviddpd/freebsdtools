@@ -35,16 +35,17 @@ PATH=/sbin:/bin:/usr/sbin:/usr/bin
 
 cmd=$1
 jailname=$2
-interface=$3
+jid=$3
+interface=$4
 
 set -x
 
-jid=`jls -j ${jailname} jid`
+#jid=`jls -j ${jailname} jid`
 
-if [ $? -ne 0 ]; then
-	echo "Can't find the jid for ${jailname} ($?)"
-	exit 2
-fi
+#if [ $? -ne 0 ]; then
+#	echo "Can't find the jid for ${jailname} ($?)"
+#	exit 2
+#fi
 
 case "${cmd}" in
 	start)
@@ -52,10 +53,10 @@ case "${cmd}" in
 		ifconfig epair${jid} create 1> /dev/null 2>&1
 		
 		ifconfig bridge${jid} addm ${interface} addm epair${jid}a 1> /dev/null 2>&1
-		ifconfig epair${jid}b vnet ${jid} 1> /dev/null 2>&1
+		ifconfig epair${jid}b vnet ${jailname} 1> /dev/null 2>&1
 	;;
 	stop)
-		ifconfig epair${jid}b -vnet ${jid} 1> /dev/null 2>&1
+		ifconfig epair${jid}b -vnet ${jailname} 1> /dev/null 2>&1
 		ifconfig bridge${jid} deletem ${interface} deletem epair${jid}a 1> /dev/null 2>&1
 		ifconfig bridge${jid} destroy 1> /dev/null 2>&1
 		ifconfig epair${jid}b destroy 1> /dev/null 2>&1
@@ -67,3 +68,4 @@ case "${cmd}" in
 	;;	
 esac
 
+exit 0
