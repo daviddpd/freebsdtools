@@ -1,0 +1,53 @@
+usbboot_zroot_hwraid()
+{
+    ZROOT_MIRROR_VDEVS=
+    SWAP_MIRROR_VDEVS=
+    _DISKS=
+    ROOT_DISK_ZPOOL_NAME="usbboot"
+    DESTDIR="/mnt/usbboot"
+    
+    DESTDIR="/mnt/${ROOT_DISK_ZPOOL_NAME}"            # DESTDIR, -R/altroot=
+    DESTDIR2="/mnt/${ROOT_DISK_ZPOOL_NAME}2"  # DESTDIR, -R/altroot=    
+    
+    if [ -n "${SYS_DISK_UMASS}" ]; then
+		_DISKS=${SYS_DISK_UMASS}
+	else 
+		echo "ERROR: didn't find any USB Disks !"
+		echo "   --> (this is probably a scripting/logic error on how I'm selecting disks)"
+		exit 1
+	fi
+        
+    for d in ${_DISKS}; do
+        gpart_destroy ${d}
+        gpart_create ${d}
+        gpart_add ${d} "efi" 1 ${ROOT_PART_SIZE_EFI}
+        gpart_add ${d} "freebsd-boot" 2 ${ROOT_PART_SIZE_BOOT}
+        if [  "${ROOT_PART_SWAP}" -eq 1 ]; then
+	        gpart_add ${d} "freebsd-swap" 3 ${ROOT_PART_SIZE_SWAP}
+	    fi
+        gpart_add ${d} "freebsd-zfs" 4 ${ROOT_PART_SIZE_ZFS} "root"
+    done
+
+    vdevs=""
+	get_glabel_vdevs "root"
+   	vdevs="${_vdevs}"
+
+    ZROOT_MIRROR_VDEVS="$vdevs"
+    
+    zpool_create "${ROOT_DISK_ZPOOL_NAME} mirror ${ZROOT_MIRROR_VDEVS}"
+
+    if [  "${ROOT_PART_SWAP}" -eq 1 ]; then
+		get_glabel_vdevs "swap"
+    	vdevs="${_vdevs}"
+
+    	create_swapmirrors ${SWAP_MIRROR_VDEVS}
+    fi
+
+	zfs create -o canmount=off -o mountpoint=none usbboot/ROOT
+	zfs create -o mountpoint=/ usbboot/ROOT/default
+	zfs create -o mountpoint=none ${ROOT_DISK_ZPOOL_NAME}/ROOT/secondary
+	echo 'vfs.root.mountfrom="zfs:' . ${ROOT_DISK_ZPOOL_NAME} . '/ROOT/default"' >> /mnt/usbboot/boot/loader.conf
+
+	# zroot_stripe_rawdev
+
+}

@@ -1,0 +1,7 @@
+/META.yml
+/META.json
+/MYMETA.*
+*.o
+*.pm.tdy
+*.bs
+.DS_Store
