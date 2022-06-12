@@ -94,6 +94,7 @@ fi
 : ${INSTALL_SRC:=1}         # IFDEFNED, install /usr/src
 
 
+
 : ${DESTDIR:="/mnt/${ROOT_DISK_ZPOOL_NAME}"}        # DESTDIR, -R/altroot=
 : ${DESTDIR2:="/mnt/${ROOT_DISK_ZPOOL_NAME}2"}  # DESTDIR, -R/altroot=
 : ${TMPDIR:="/tmp/finsttmp"}    # tmp directory.
@@ -1161,8 +1162,7 @@ if [ -n "${PKG_SET}" -a -n "${PKG_INSTALLER}" ]; then
     http_fetch ${PKG_SET} ${DESTDIR} ${REMOTE_CONFD_HTTP}
     http_fetch ${PKG_INSTALLER} ${DESTDIR} ${REMOTE_CONFD_HTTP}
     chroot ${DESTDIR} sh /${PKG_INSTALLER} /${PKG_SET}
-    grep "sudo" ${DESTDIR}/${PKG_SET} > /dev/null
-    if [ $? -eq 0 ]; then 
+    if [ -x "${DESTDIR}/usr/local/bin/sudo"  ]; then 
         echo "%wheel ALL=(ALL) ALL" > ${DESTDIR}/usr/local/etc/sudoers.d/wheel
     fi
     rm ${DESTDIR}/${PKG_SET} ${DESTDIR}/${PKG_INSTALLER}
@@ -1189,6 +1189,8 @@ if [ $? -eq 0 ]; then
         echo " " >>  ${DESTDIR}/etc/ssh/ssh_config 
     fi
 fi
+
+if 
 
 # mv ${DESTDIR}/etc/motd ${DESTDIR}/etc/motd.orig
 # head -1 ${DESTDIR}/etc/motd.orig > ${DESTDIR}/etc/motd
