@@ -86,7 +86,10 @@ fi
 : ${REMOTE_RELEASE_HTTP:=}
 : ${REMOTE_SCRIPTS_HTTP:=}
 : ${REMOTE_CONFD_HTTP:=}
-: ${REMOTE_PKG_URL:=}
+: ${REMOTE_PKG_URL:=}       # Obsolete 
+: ${REMOTE_CUSTOM_REPOS:=}  # space delimited of repo files 
+
+
 
 : ${NO_INSTALL:=}       # IFDEFNED, don't do any os install
 : ${INSTALL_DEBUG:=}        # IFDEFNED, install the dbg.txz packages 
@@ -109,7 +112,7 @@ fi
 : ${HOSTNAME:=}
 : ${SERIAL:=}
 : ${MACS:=}
-: ${NICS:=`ifconfig -l`}
+: ${NICS:=`ifconfig -l ether`}
 
 : ${UUID:=}
 : ${VENDOR:=}
@@ -120,6 +123,8 @@ fi
 : ${PKG_INSTALLER:=}
 : ${ADMIN_CONFIG:=}
 : ${USER_PROVISION:=}
+: ${ROOT_PASSWORD_HASH:='$6$OmI7uzlMns./sU22$AoVrDLcwzmetPzI1wi8/19j/3U6gl5iJImc6SfjRB4wS1NCISXmgon4AwObzbbP1aMfycGdLOW2Ne7EdDKHRi/'} # abcd1234
+: ${RCD_ENABLES:=""}
 
 : ${CONFIGS:=}
 
@@ -1119,20 +1124,23 @@ zfs_enable="YES"
 
 EOF2
 
+if [ -n "${RCD_ENABLES}" ]; then
+    for rcd in "${RCD_ENABLES}"; do
+        rcdfile=`echo ${rcd} | awk -F: '{print $1}'`
+        rcdvar=`echo ${rcd} | awk -F: '{print $2}'`
+        if [ ! -f "${rcd}" ]; then
+            touch ${rcd}
+        fi
+        echo  ${rcdvar} >> ${rcdfile}
+    done
+fi
+
 cp -v /etc/resolv.conf  ${DESTDIR}/etc/resolv.conf
 
 if [ -n "${USER_PROVISION}" ]; then
     http_fetch ${USER_PROVISION} ${DESTDIR}/root ${REMOTE_SCRIPTS_HTTP} 
     chmod 755 ${DESTDIR}/root/${USER_PROVISION}
 fi
-
-# save the calculated config file, for debugging/historical purposes
-touch ${DESTDIR}/etc/${dpdfinst_config_file}
-for p in ${dpdfinst_config_paths}; do
-    if [ -f "${p}/${dpdfinst_config_file}" ]; then
-        cat ${p}/${dpdfinst_config_file} >> ${DESTDIR}/etc/${dpdfinst_config_file}
-    fi
-done
 
 if [ -n "${ADMIN_CONFIG}" ]; then
     http_fetch ${ADMIN_CONFIG} ${DESTDIR}/etc/ ${REMOTE_CONFD_HTTP}
@@ -1142,25 +1150,21 @@ if [ -n "${ADMIN_CONFIG}" ]; then
     done    
 fi
 
-if [ -n "${REMOTE_PKG_URL}" ]; then 
+if [ -n "${REMOTE_CUSTOM_REPOS}" ]; then 
     mkdir -p ${DESTDIR}/usr/local/etc/pkg/repos/
     echo "FreeBSD { enabled: no }" > ${DESTDIR}/usr/local/etc/pkg/repos/FreeBSD.conf
-## FIXME : fetch this from remote config
-    cat > ${DESTDIR}/usr/local/etc/pkg/repos/dpdfinst.conf << dpdfinst_REPO
-dpdfinst: {
-   url: "${REMOTE_PKG_URL}"
-   signature_type: "NONE",
-   fingerprints: "/usr/share/keys/pkg",
-   enabled: yes
-}
-dpdfinst_REPO
+    for repo in "${REMOTE_CUSTOM_REPOS}"; do
+        http_fetch ${repo} ${DESTDIR}/usr/local/etc/pkg/repos/ ${REMOTE_CONFD_HTTP}
+        reponame=`echo ${repo} | sed -e 's/\.repo$/.conf/g'`
+        mv ${DESTDIR}/usr/local/etc/pkg/repos/${repo} ${DESTDIR}/usr/local/etc/pkg/repos/${reponame}
+    done
 fi
 
 mv /mnt/${ROOT_DISK_ZPOOL_NAME}/etc/hosts /mnt/${ROOT_DISK_ZPOOL_NAME}/etc/hosts.orig
 cp /etc/hosts /mnt/${ROOT_DISK_ZPOOL_NAME}/etc/
 if [ -n "${PKG_SET}" -a -n "${PKG_INSTALLER}" ]; then 
     http_fetch ${PKG_SET} ${DESTDIR} ${REMOTE_CONFD_HTTP}
-    http_fetch ${PKG_INSTALLER} ${DESTDIR} ${REMOTE_CONFD_HTTP}
+    http_fetch ${PKG_INSTALLER} ${DESTDIR} ${REMOTE_SCRIPTS_HTTP}
     chroot ${DESTDIR} sh /${PKG_INSTALLER} /${PKG_SET}
     if [ -x "${DESTDIR}/usr/local/bin/sudo"  ]; then 
         echo "%wheel ALL=(ALL) ALL" > ${DESTDIR}/usr/local/etc/sudoers.d/wheel
@@ -1190,19 +1194,18 @@ if [ $? -eq 0 ]; then
     fi
 fi
 
-if 
-
-# mv ${DESTDIR}/etc/motd ${DESTDIR}/etc/motd.orig
-# head -1 ${DESTDIR}/etc/motd.orig > ${DESTDIR}/etc/motd
-# http_fetch_config dpdfinst_motd.txt
-# cat ${TMPDIR}/dpdfinst_motd.txt >> ${DESTDIR}/etc/motd
-
+fi  ## if [ -z "${NO_INSTALL}" ]; then
+if [ -n "${ROOT_PASSWORD_HASH}" ]; then 
+cat > ${DESTDIR}/root/rootpw.sh << EOFPW
+    #!/bin/sh
+    echo '${ROOT_PASSWORD_HASH}' | /usr/bin/sed -e 's,%,$,g' | /usr/sbin/pw usermod root -H 0
+    
+EOFPW
+chmod 755 ${DESTDIR}/root/rootpw.sh
+cat ${DESTDIR}/root/rootpw.sh
+chroot ${DESTDIR} /root/rootpw.sh
+rm ${DESTDIR}/root/rootpw.sh
 fi
-# if [ ${BOOTONLY_ON_USB} -eq 1 ]; then
-#     mkdir -p /mnt/usbboot/usbboot
-#     mv -v /mnt/${ROOT_DISK_ZPOOL_NAME}/boot /mnt/usbboot/usbboot
-#     ln -s /usbboot/boot ${DESTDIR}/boot
-# fi
 
 umount -f ${DESTDIR}/dev || true 
 zfs umount -a
