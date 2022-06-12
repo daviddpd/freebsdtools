@@ -2,6 +2,11 @@
 set -x
 ### DNS /etc/resolv.conf 
 
+if [ -f "$1" ]; then
+    _CLI_CONFIG_FILE="$1"
+fi
+
+
 
 : ${dpdfinst_config_paths:="/etc /usr/local/etc /boot / ."}
 : ${dpdfinst_config_file:="dpdfinst.conf"}
@@ -11,6 +16,11 @@ for p in ${dpdfinst_config_paths}; do
         . ${p}/${dpdfinst_config_file}
     fi
 done
+
+if [ -n "${_CLI_CONFIG_FILE}" -a  -f "${_CLI_CONFIG_FILE}" ]; then
+    . "${_CLI_CONFIG_FILE}"
+fi
+
 
 # ROOT_DISK_ZPOOL:  Type of zpool for the Root Disk.  Implemented types are:
 #     zroot_stripe_rawdev
@@ -44,21 +54,26 @@ done
 
 : ${GPTPART_ALIGNMENT:="4K"}        # gpart alignment "-a " value.
 
-: ${ROOT_PART_SIZE_EFI:="1024k"}    # EFI Partition Size
+: ${ROOT_PART_SIZE_EFI:="1024M"}    # EFI Partition Size
 : ${ROOT_PART_SIZE_BOOT:="512k"}    # freebsd-boot partition size
 : ${ROOT_PART_SIZE_SWAP:="8G"}      # partition for swap on root block devices
 : ${ROOT_PART_SIZE_DATA:="-1"}
 : ${ROOT_PART_SIZE_SLOG:=}
 : ${ROOT_PART_SIZE_CACHE=}
 : ${ROOT_ON_USB:=0}
-: ${BOOTONLY_ON_USB:=0}
+# : ${BOOTONLY_ON_USB:=0}
 
 
 : ${ROOT_PART_SWAP:=1}              # create swap partition
 : ${SWAP_ON_ZROOT:=0}               # boolean, create swap on the root zpool
+: ${NO_SWAP_ON_SPINNING:=1}         # by default, don't create swap partitions on spinning disks, it's 2020 after all.
+
 : ${ROOT_PART_SIZE_ZFS:=0}          # size of zroot vdev.  0=auto, use remaning space.
 : ${DATA_PART_SIZE_ZFS:=0}          # unused, add a partition for "data" beyond the VDEV part for zroot
 : ${BOOTCODE_SKIP:=}                # IFDEFNED,  do not install bootcode, pmbr and gptzfsboot 
+: ${BOOTCODE_CONSOLE:="vidconsole"}             
+                                    # IFDEFNED,  set the freebsd bootloader console.
+                                    # console="comconsole,vidconsole"
 
 
 : ${ZPOOL_RAIDZ:="1"}               # 1 OR 2 : RAIDZ 1 (RAID-5) or RAIDZ 2 (RAID-6)
@@ -217,7 +232,7 @@ gpart_destroy()
     if [ ${DRYRUN} ]; then
         echo ${cmd}
     else
-        `${cmd}`
+        ${cmd}
     fi
 }
 gpart_create()
@@ -227,7 +242,7 @@ gpart_create()
     if [ ${DRYRUN} ]; then
         echo ${cmd}
     else
-        `${cmd}`
+        ${cmd}
     fi
 }
 
@@ -316,7 +331,7 @@ gpart_add()
     if [ ${DRYRUN} ]; then
         echo ${cmd}
     else
-        `${cmd}`
+        ${cmd}
     fi
     
 }
@@ -454,13 +469,14 @@ zroot_stripe_single()
         gpart_create ${d}
         gpart_add ${d} "efi" 1 ${ROOT_PART_SIZE_EFI}
         gpart_add ${d} "freebsd-boot" 2 ${ROOT_PART_SIZE_BOOT}
-        gpart_add ${d} "freebsd-swap" 3 ${ROOT_PART_SIZE_SWAP}
+        if [ "${ROOT_PART_SWAP}" -eq 1 -a -n "${ROOT_PART_SIZE_SWAP}" ]; then
+            gpart_add ${d} "freebsd-swap" 3 ${ROOT_PART_SIZE_SWAP}
+        fi
         gpart_add ${d} "freebsd-zfs" 4 ${ROOT_PART_SIZE_ZFS} "root" 
     done
     
     get_glabel_vdevs root
     vdevs="${_vdevs}"
-    
 
     zpool_create "${ROOT_DISK_ZPOOL_NAME} ${vdevs}"
 
@@ -495,6 +511,10 @@ zpool_raid50()
     if [ ${ZPOOL_RAIDZ} -eq 2 ]; then
         vdevs=${ZPOOL_RAIDZ2_NVEDS};
         raidz="raidz2"
+    fi
+    if [ ${ZPOOL_RAIDZ} -eq 3 ]; then
+        vdevs=${ZPOOL_RAIDZ3_NVEDS};
+        raidz="raidz3"
     fi
 
     i=0
@@ -589,7 +609,7 @@ usb()
         gpart_add ${d} "efi" 1 ${ROOT_PART_SIZE_EFI}
         gpart_add ${d} "freebsd-boot" 2 ${ROOT_PART_SIZE_BOOT}
         # ! DO NOT PUT SWAP ON USB DISKS ! Major performance issues.
-        #if [  "${ROOT_PART_SWAP}" -eq 1 ]; then
+        #if [  "${ROOT_PART_SWAP}" -eq 1 -a -n "${ROOT_PART_SIZE_SWAP}" ]; then
         #    gpart_add ${d} "freebsd-swap" 3 ${ROOT_PART_SIZE_SWAP}
         #fi
         gpart_add ${d} "freebsd-zfs" 4 ${ROOT_PART_SIZE_ZFS} "root"
@@ -645,7 +665,9 @@ zroot_mirror_two()
         gpart_create ${d}
         gpart_add ${d} "efi" 1 ${ROOT_PART_SIZE_EFI}
         gpart_add ${d} "freebsd-boot" 2 ${ROOT_PART_SIZE_BOOT}
-        gpart_add ${d} "freebsd-swap" 3 ${ROOT_PART_SIZE_SWAP}
+        if [  "${ROOT_PART_SWAP}" -eq 1 -a -n "${ROOT_PART_SIZE_SWAP}" ]; then
+            gpart_add ${d} "freebsd-swap" 3 ${ROOT_PART_SIZE_SWAP}
+        fi
         gpart_add ${d} "freebsd-zfs" 4 ${ROOT_PART_SIZE_ZFS} "root" 
         ZROOT_MIRROR_VDEVS="${ZROOT_MIRROR_VDEVS} ${ROOT_DISK_TYPE}${d}p4"
         SWAP_MIRROR_VDEVS="${SWAP_MIRROR_VDEVS} ${ROOT_DISK_TYPE}${d}p3"
@@ -669,21 +691,23 @@ zroot_stripe_two_ssd_hd()
         gpart_add ${d} "efi" 1, ${ROOT_PART_SIZE_EFI}
         gpart_add ${d} "freebsd-boot" 2 ${ROOT_PART_SIZE_BOOT}
         # no swap on spinning.
-        #gpart_add(${d}, "freebsd-swap", 3, ${ROOT_PART_SIZE_SWAP})
+        if [ "${NO_SWAP_ON_SPINNING}" -eq 0 -a "${ROOT_PART_SWAP}" -eq 1 -a -n "${ROOT_PART_SIZE_SWAP}" ]; then
+            gpart_add ${d}, "freebsd-swap", 3, ${ROOT_PART_SIZE_SWAP}
+        fi
         gpart_add ${d} "freebsd-zfs" 4 ${ROOT_PART_SIZE_ZFS} "root"
     done
     get_glabel_vdevs "root"
     vdevs="${_vdevs}"
 
-    
-    
     for d in ${SYS_DISK_SSD}; do
         ssd=${d}
         gpart_destroy ${d}
         gpart_create ${d}
         gpart_add ${d} "efi" 1 ${ROOT_PART_SIZE_EFI}
         gpart_add ${d} "freebsd-boot" 2 ${ROOT_PART_SIZE_BOOT}
-        gpart_add ${d} "freebsd-swap" 3 ${ROOT_PART_SIZE_SWAP}
+        if [ "${ROOT_PART_SWAP}" -eq 1 -a -n "${ROOT_PART_SIZE_SWAP}" ]; then        
+            gpart_add ${d} "freebsd-swap" 3 ${ROOT_PART_SIZE_SWAP}
+        fi
         gpart_add ${d} "freebsd-zfs" 5 ${ROOT_PART_SIZE_ZFS} "cache"
     done    
     get_glabel_vdevs "cache"
@@ -705,7 +729,9 @@ zroot_raid10()
         gpart_create ${d}
         gpart_add ${d} "efi" 1 ${ROOT_PART_SIZE_EFI}
         gpart_add ${d} "freebsd-boot" 2 ${ROOT_PART_SIZE_BOOT}
-        gpart_add ${d} "freebsd-swap" 3 ${ROOT_PART_SIZE_SWAP}
+        if [ "${NO_SWAP_ON_SPINNING}" -eq 0 -a "${ROOT_PART_SWAP}" -eq 1 -a -n "${ROOT_PART_SIZE_SWAP}" ]; then
+            gpart_add ${d} "freebsd-swap" 3 ${ROOT_PART_SIZE_SWAP}
+        fi
         gpart_add ${d} "freebsd-zfs"  4 ${ROOT_PART_SIZE_ZFS} "root"
 
         ZROOT_MIRROR_VDEVS="${ZROOT_MIRROR_VDEVS} ${ROOT_DISK_TYPE}${d}p4"
@@ -756,7 +782,7 @@ zroot_raidZ()
             gpart_create ${d}
             gpart_add ${d} "efi" 1 ${ROOT_PART_SIZE_EFI}
             gpart_add ${d} "freebsd-boot" 2 ${ROOT_PART_SIZE_BOOT}
-            if [ -z "${SYS_DISK_SSD}" ]; then
+            if [ "${NO_SWAP_ON_SPINNING}" -eq 0 -a "${ROOT_PART_SWAP}" -eq 1 -a -n "${ROOT_PART_SIZE_SWAP}" ]; then
                 gpart_add ${d} "freebsd-swap" 3 ${ROOT_PART_SIZE_SWAP}
                 SWAP_MIRROR_VDEVS="${SWAP_MIRROR_VDEVS} ${d}p3"
             fi
@@ -773,8 +799,10 @@ zroot_raidZ()
             gpart_create ${d}
             gpart_add ${d} "efi" 1 ${ROOT_PART_SIZE_EFI}
             gpart_add ${d} "freebsd-boot" 2 ${ROOT_PART_SIZE_BOOT}
-            gpart_add ${d} "freebsd-swap" 3 ${ROOT_PART_SIZE_SWAP}
-            SWAP_MIRROR_VDEVS="${SWAP_MIRROR_VDEVS} ${d}p3"
+            if [ "${ROOT_PART_SWAP}" -eq 1 -a -n "${ROOT_PART_SIZE_SWAP}" ]; then
+                gpart_add ${d} "freebsd-swap" 3 ${ROOT_PART_SIZE_SWAP}
+                SWAP_MIRROR_VDEVS="${SWAP_MIRROR_VDEVS} ${d}p3"
+            fi
             if [ ${ZPOOL_VDEVS_ALLSSD} -eq 1 ]; then
                 gpart_add ${d} "freebsd-zfs" 4 ${ROOT_PART_SIZE_ZFS} "root"
                 ZROOT_VDEVS="${ZROOT_VDEVS} ${d}p4"
@@ -838,6 +866,10 @@ for p in ${dpdfinst_config_paths}; do
         . ${p}/${dpdfinst_config_file}
     fi
 done
+if [ -n "${_CLI_CONFIG_FILE}" -a  -f "${_CLI_CONFIG_FILE}" ]; then
+    . "${_CLI_CONFIG_FILE}"
+fi
+
 find_ssds
 
 
@@ -871,9 +903,9 @@ mkdir -p ${DESTDIR}
 mkdir -p ${DESTDIR2}
 
 
-if [ ${ROOT_ON_USB} -eq 1 -o ${BOOTONLY_ON_USB} -eq 1 ]; then
-    usb
-fi
+# if [ ${ROOT_ON_USB} -eq 1 -o ${BOOTONLY_ON_USB} -eq 1 ]; then
+#     usb
+# fi
 
 case ${ROOT_DISK_ZPOOL} in
     xcpnas_2020)
@@ -903,6 +935,9 @@ case ${ROOT_DISK_ZPOOL} in
     zroot_raidZ)
         zroot_raidZ
     ;;
+    usb)
+        ROOT_DISK_ZPOOL_NAME=usbboot
+        usb
 esac
 
 
@@ -955,9 +990,9 @@ if [ -z "${BOOTCODE_SKIP}" ]; then
         if [ -e "/dev/${d}p2" ]; then 
             cmd="gpart bootcode -b ${DESTDIR}/boot/pmbr -p ${DESTDIR}/boot/gptzfsboot -i 2 ${d}"
             if [ -z "${DRYRUN}" ]; then
-                echo "${cmd}"
+                ${cmd}
             else
-                `${cmd}`
+                echo "${cmd}"
             fi
         fi
         _cur_efipart="/dev/${d}p1"
@@ -976,18 +1011,21 @@ if [ -z "${BOOTCODE_SKIP}" ]; then
             if [ ${DRYRUN} ]; then
                 cat ${_tmpfile}
             else
-                `${_tmpfile}`
+                ${_tmpfile}
             fi
             rm -f ${_tmpfile}
+            umount -f /mnt/efimnt
         fi
     done
 fi
 
 if [ -z "${NO_INSTALL}" ]; then
 
+mount -t devfs devfs ${DESTDIR}/dev
+
 cat > ${DESTDIR}/boot/loader.conf << EOF
 
-console="comconsole,vidconsole"
+console="${BOOTCODE_CONSOLE}"
 comconsole_speed="115200"
 comconsole_port="0x2f8"
 boot_multicons="yes"
@@ -1133,9 +1171,9 @@ fi
 mv /mnt/${ROOT_DISK_ZPOOL_NAME}/etc/hosts.orig /mnt/${ROOT_DISK_ZPOOL_NAME}/etc/hosts
 
 
-AESNI_CIPHERS=`${DESTDIR}/usr/bin/ssh -Q cipher | grep gcm | sort -r | xargs | sed -E 's/ /,/g'`
-AESNI_CIPHERS2=`${DESTDIR}/usr/bin/ssh -Q cipher | grep aes | grep -v gcm | sort -r | xargs | sed -E 's/ /,/g'`
-AESNI_CIPHERS="Ciphers ${AESNI_CIPHERS},${AESNI_CIPHERS2}"
+AESNI_CIPHERS1=`chroot ${DESTDIR} sh -c "/usr/bin/ssh -Q cipher | grep gcm | sort -r | xargs | sed -E 's/ /,/g'"`
+AESNI_CIPHERS2=`chroot ${DESTDIR} sh -c "/usr/bin/ssh -Q cipher | grep aes | grep -v gcm | sort -r | xargs | sed -E 's/ /,/g'"`
+AESNI_CIPHERS="Ciphers ${AESNI_CIPHERS1},${AESNI_CIPHERS2}"
 grep -i AESNI /var/run/dmesg.boot > /dev/null
 if [ $? -eq 0 ]; then
     if [ $? -eq 0 ]; then
@@ -1158,12 +1196,13 @@ fi
 # cat ${TMPDIR}/dpdfinst_motd.txt >> ${DESTDIR}/etc/motd
 
 fi
-if [ ${BOOTONLY_ON_USB} -eq 1 ]; then
-    mkdir -p /mnt/usbboot/usbboot
-    mv -v /mnt/${ROOT_DISK_ZPOOL_NAME}/boot /mnt/usbboot/usbboot
-    ln -s /usbboot/boot ${DESTDIR}/boot
-fi
+# if [ ${BOOTONLY_ON_USB} -eq 1 ]; then
+#     mkdir -p /mnt/usbboot/usbboot
+#     mv -v /mnt/${ROOT_DISK_ZPOOL_NAME}/boot /mnt/usbboot/usbboot
+#     ln -s /usbboot/boot ${DESTDIR}/boot
+# fi
 
+umount -f ${DESTDIR}/dev || true 
 zfs umount -a
 zfs set mountpoint=/ ${ROOT_DISK_ZPOOL_NAME}/ROOT/default
 zfs snap ${ROOT_DISK_ZPOOL_NAME}/ROOT/default@installed
