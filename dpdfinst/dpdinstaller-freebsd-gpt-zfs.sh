@@ -59,7 +59,10 @@ fi
 : ${ROOT_PART_SIZE_SWAP:="8G"}      # partition for swap on root block devices
 : ${ROOT_PART_SIZE_DATA:="-1"}
 : ${ROOT_PART_SIZE_SLOG:=}
-: ${ROOT_PART_SIZE_CACHE=}
+: ${ROOT_PART_SIZE_CACHE:=}
+: ${ROOT_PART_SIZE_SLOG_STANDALONE:=}
+: ${ROOT_PART_SIZE_CACHE_STANDALONE:=}
+
 : ${ROOT_ON_USB:=0}
 # : ${BOOTONLY_ON_USB:=0}
 
@@ -81,7 +84,23 @@ fi
 : ${ZPOOL_RAIDZ2_NVEDS:="5"}        # NUMBER OF VDEVS NEEDS FOR RAIDZ 2
 : ${ZPOOL_VDEVS_RAW:=0}
 : ${ZPOOL_VDEVS_ALLSSD:=0}
+: ${ZPOOL_ASHIFT:=13}               # ashift is actually the binary exponent which represents sector size
+                                    #    for example, setting ashift=9 means your sector size will be 2^9, or 512 bytes. 
 
+                                    # vfs.zfs.max_auto_ashift: Max ashift used when optimizing for logical -> physical sector size on new top-level vdevs. (LEGACY)
+                                    # vfs.zfs.min_auto_ashift: Min ashift used when creating new top-level vdev. (LEGACY)
+                                    
+                                    # vfs.zfs.vdev.max_auto_ashift: Maximum ashift used when optimizing for logical -> physical sector size on new top-level vdevs
+                                    # vfs.zfs.vdev.min_auto_ashift: Minimum ashift used when creating new top-level vdevs
+
+                                    # vfs.zfs.max_auto_ashift: 16
+                                    # vfs.zfs.min_auto_ashift: 9
+                                    # vfs.zfs.vdev.max_auto_ashift: 16
+                                    # vfs.zfs.vdev.min_auto_ashift: 9
+
+                                    # ashift=12, 4k 
+                                    # ashift=13, 8k 
+                                    # ashift=14, 16k 
 
 : ${REMOTE_RELEASE_HTTP:=}
 : ${REMOTE_SCRIPTS_HTTP:=}
@@ -263,7 +282,7 @@ gpart_add()
 
     gptlabel=
     lnum=
-    snum=`dmesg | grep ^${dev}: | grep 'Serial Number' | head -1 | awk '{print $4}' | rev | cut -c 1-6 | rev`
+    snum=`cat /var/run/dmesg.boot | grep ^${dev}: | grep 'Serial Number' | head -1 | awk '{print $4}' | rev | cut -c 1-6 | rev`
     
     case "${ptype}" in
         efi)
@@ -350,7 +369,7 @@ zpool_create()
     POOL_VDEVS=$@
 
     # options here should be pulled out.
-    zpool create -f -R /mnt/${ROOT_DISK_ZPOOL_NAME} -O canmount=off -O mountpoint=none -O atime=off -O compression=on $POOL_VDEVS
+    zpool create -f -R /mnt/${ROOT_DISK_ZPOOL_NAME} -o ashift=${ZPOOL_ASHIFT} -O canmount=off -O mountpoint=none -O atime=off -O compression=on $POOL_VDEVS
     if [ $? -ne 0 -a -z ${DRYRUN} ]; then
         echo ""
         echo " Error Creating zpool."
@@ -454,7 +473,7 @@ zroot_stripe_rawdev()
         gpart_destroy ${d}
     done
 
-    zpool create -f -R /mnt/${ROOT_DISK_ZPOOL_NAME} -O canmount=off -O mountpoint=none -O atime=off -O compression=on ${ROOT_DISK_ZPOOL_NAME} ${SYS_DISK_HDD} ${SYS_DISK_SSD}
+    zpool create -f -R /mnt/${ROOT_DISK_ZPOOL_NAME} -o ashift=${ZPOOL_ASHIFT} -O canmount=off -O mountpoint=none -O atime=off -O compression=on ${ROOT_DISK_ZPOOL_NAME} ${SYS_DISK_HDD} ${SYS_DISK_SSD}
     if [ $? -ne 0 ]; then
         echo ""
         echo " Error Creating zpool."
@@ -673,10 +692,12 @@ zroot_mirror_two()
         gpart_add ${d} "freebsd-boot" 2 ${ROOT_PART_SIZE_BOOT}
         if [  "${ROOT_PART_SWAP}" -eq 1 -a -n "${ROOT_PART_SIZE_SWAP}" ]; then
             gpart_add ${d} "freebsd-swap" 3 ${ROOT_PART_SIZE_SWAP}
+            SWAP_MIRROR_VDEVS="${SWAP_MIRROR_VDEVS} ${ROOT_DISK_TYPE}${d}p3"
         fi
         gpart_add ${d} "freebsd-zfs" 4 ${ROOT_PART_SIZE_ZFS} "root" 
         ZROOT_MIRROR_VDEVS="${ZROOT_MIRROR_VDEVS} ${ROOT_DISK_TYPE}${d}p4"
-        SWAP_MIRROR_VDEVS="${SWAP_MIRROR_VDEVS} ${ROOT_DISK_TYPE}${d}p3"
+        
+        
     done
 
     #zroot dataset, which will be inherited by its children:
@@ -1128,10 +1149,10 @@ if [ -n "${RCD_ENABLES}" ]; then
     for rcd in "${RCD_ENABLES}"; do
         rcdfile=`echo "${rcd}" | awk -F: '{print $1}'`
         rcdvar=`echo "${rcd}" | awk -F: '{print $2}'`
-        if [ ! -f "${rcdfile}" ]; then
-            touch ${rcdfile}
+        if [ ! -f "${DESTDIR}/${rcdfile}" ]; then
+            touch ${DESTDIR}/${rcdfile}
         fi
-        echo  ${rcdvar} >> ${rcdfile}
+        echo  ${rcdvar} >> ${DESTDIR}/${rcdfile}
     done
 fi
 
