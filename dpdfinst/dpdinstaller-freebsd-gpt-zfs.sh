@@ -84,7 +84,7 @@ fi
 : ${ZPOOL_RAIDZ2_NVEDS:="5"}        # NUMBER OF VDEVS NEEDS FOR RAIDZ 2
 : ${ZPOOL_VDEVS_RAW:=0}
 : ${ZPOOL_VDEVS_ALLSSD:=0}
-: ${ZPOOL_ASHIFT:=13}               # ashift is actually the binary exponent which represents sector size
+: ${ZPOOL_ASHIFT:=12}               # ashift is actually the binary exponent which represents sector size
                                     #    for example, setting ashift=9 means your sector size will be 2^9, or 512 bytes. 
 
                                     # vfs.zfs.max_auto_ashift: Max ashift used when optimizing for logical -> physical sector size on new top-level vdevs. (LEGACY)
